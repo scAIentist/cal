@@ -84,6 +84,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      # `secrets` cannot be referenced in a step-level `if`; evaluate it here instead
+      SLACK_WEBHOOK_SET: ${{ secrets.CI_SLACK_WEBHOOK_URL != '' }}
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -106,7 +108,7 @@ jobs:
           use-as-latest: "true"
 
       - name: Notify Slack on Success
-        if: success() && secrets.CI_SLACK_WEBHOOK_URL != ''
+        if: success() && env.SLACK_WEBHOOK_SET == 'true'
         uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
@@ -117,7 +119,7 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.CI_SLACK_WEBHOOK_URL }}
 
       - name: Notify Slack on Failure
-        if: failure() && secrets.CI_SLACK_WEBHOOK_URL != ''
+        if: failure() && env.SLACK_WEBHOOK_SET == 'true'
         uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
@@ -133,6 +135,8 @@ jobs:
     runs-on: ubuntu-24.04-arm
     env:
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      # `secrets` cannot be referenced in a step-level `if`; evaluate it here instead
+      SLACK_WEBHOOK_SET: ${{ secrets.CI_SLACK_WEBHOOK_URL != '' }}
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -154,7 +158,7 @@ jobs:
           push-image: ${{ (github.event_name == 'push' || inputs.PUSH_IMAGE) && 'true' || 'false' }}
 
       - name: Notify Slack on Success
-        if: success() && secrets.CI_SLACK_WEBHOOK_URL != ''
+        if: success() && env.SLACK_WEBHOOK_SET == 'true'
         uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
@@ -165,7 +169,7 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.CI_SLACK_WEBHOOK_URL }}
 
       - name: Notify Slack on Failure
-        if: failure() && secrets.CI_SLACK_WEBHOOK_URL != ''
+        if: failure() && env.SLACK_WEBHOOK_SET == 'true'
         uses: slackapi/slack-github-action@v1.24.0
         with:
           payload: |
