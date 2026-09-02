@@ -8,7 +8,7 @@ What this fork adds on top of upstream (keep these paths in mind when syncing th
 | Path | Purpose |
 |---|---|
 | `deploy/hetzner/` | `docker-compose.yml`, `.env.example`, `cron.sh` (replaces Vercel Cron), `backup.sh` |
-| `.github/workflows/scaientist-docker-image.yml` | builds `ghcr.io/scaientist/cal` on every push to `main` |
+| `.github/workflows/scaientist-docker-image.yml` | builds `ghcr.io/scaientist/cal` on every push to `main` (all upstream workflows are removed, see section 9) |
 | `apps/web/lib/signup/isEmailDomainAllowed.ts` + one check in `apps/web/app/api/auth/signup/route.ts` | `SIGNUP_ALLOWED_EMAIL_DOMAINS` — self-service signup only for scaientist.eu, scaientist.com, sci.tools |
 | `docs/scaientist/` | this runbook and `EMAIL-MIGRATION.md` |
 
@@ -119,6 +119,7 @@ Separate, unrelated finding while checking DNS: the SPF record for `scaientist.e
 ## 9. Updating (Dimitrije)
 
 1. GitHub → scAIentist/cal → **Sync fork** (pulls upstream cal.diy into `main`). Our changes live only in the paths listed at the top, so conflicts are rare.
+   Upstream's own CI workflows (`.github/workflows/*`, ~50 files) are deleted in this fork because they need Cal.com's secrets and fail on every push. If a sync brings some back or reports a conflict on them, resolve by keeping them deleted (or click "Disable workflow" in the Actions tab for any that reappear). Only `scaientist-docker-image.yml` should remain.
 2. The push to `main` triggers the image build (~20–30 min). Watch Actions.
 3. On the server: `cd /opt/cal/deploy/hetzner && docker compose pull && docker compose up -d`. Migrations run on start.
 4. Rollback: set `CAL_IMAGE_TAG=<previous sha>` in `.env` and `docker compose up -d`.
