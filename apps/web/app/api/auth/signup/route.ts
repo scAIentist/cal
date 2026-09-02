@@ -15,6 +15,8 @@ import { checkCfTurnstileToken } from "@calcom/lib/server/checkCfTurnstileToken"
 import { prisma } from "@calcom/prisma";
 import { signupSchema } from "@calcom/prisma/zod-utils";
 
+import { isEmailDomainAllowed } from "@lib/signup/isEmailDomainAllowed";
+
 async function ensureSignupIsEnabled(body: Record<string, string>) {
   const { token } = signupSchema
     .pick({
@@ -32,6 +34,15 @@ async function ensureSignupIsEnabled(body: Record<string, string>) {
     throw new HttpError({
       statusCode: 403,
       message: "Signup is disabled",
+    });
+  }
+
+  // Self-hosted option: restrict self-service signups to specific email domains.
+  const parsedEmail = signupSchema.pick({ email: true }).safeParse(body);
+  if (parsedEmail.success && !isEmailDomainAllowed(parsedEmail.data.email)) {
+    throw new HttpError({
+      statusCode: 403,
+      message: "Signup is restricted to company email addresses",
     });
   }
 }
