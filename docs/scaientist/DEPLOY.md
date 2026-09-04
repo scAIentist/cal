@@ -1,13 +1,13 @@
 # cal.scaientist.eu — Hetzner deployment runbook
 
 Self-hosted scheduling for scAIentist, a fork of [calcom/cal.diy](https://github.com/calcom/cal.diy) (MIT).
-Hosting: one Hetzner VM with Docker Compose, Postgres on the same box, behind the existing Traefik.
+Hosting: the existing Hetzner Swarm VM (`46.225.83.45`), Postgres in the same stack, behind the existing Traefik. Deployment files and workflow: [scAIentist/traefik](https://github.com/scAIentist/traefik) → `cal/` and `docs/CAL.md`.
 
 What this fork adds on top of upstream (keep these paths in mind when syncing the fork):
 
 | Path | Purpose |
 |---|---|
-| `deploy/hetzner/` | `docker-compose.yml`, `.env.example`, `cron.sh` (replaces Vercel Cron), `backup.sh` |
+| (deployment) | lives in the infra repo [scAIentist/traefik](https://github.com/scAIentist/traefik) under `cal/` (Swarm stack, deploy workflow, backup) |
 | `.github/workflows/scaientist-docker-image.yml` | builds `ghcr.io/scaientist/cal` on every push to `main` (all upstream workflows are removed, see section 9) |
 | `apps/web/lib/signup/isEmailDomainAllowed.ts` + one check in `apps/web/app/api/auth/signup/route.ts` | `SIGNUP_ALLOWED_EMAIL_DOMAINS` — self-service signup only for scaientist.eu, scaientist.com, sci.tools |
 | `docs/scaientist/` | this runbook and `EMAIL-MIGRATION.md` |
@@ -25,60 +25,18 @@ Facts the setup relies on:
 
 | Step | Owner |
 |---|---|
-| 1–3, 7, 9 (server, compose, secrets, updates, backups) | Dimitrije |
+| 2–3, 7, 9 (deploy, secrets, updates, backups) | Ivan (VM access via Dimitrije) |
 | 4 (DNS record) | Luka, once Dimitrije sends the server IP |
 | 5, 6, 8 (Google Cloud OAuth, Resend, first login) | Luka |
 
-## 2. Server (Dimitrije)
+## 2–3. Server and deploy (Ivan)
 
-1. Hetzner Cloud **CX22** (2 vCPU / 4 GB / 40 GB, Falkenstein or Nuremberg) is enough for one user. Ubuntu 24.04, Docker + Compose plugin, the existing Traefik stack with a network named `traefik` and a Let's Encrypt resolver named `letsencrypt` (change the two names in `deploy/hetzner/docker-compose.yml` if yours differ).
-2. Firewall: only 22/80/443 inbound. Port 3000 is never published; Traefik reaches the container over the Docker network.
-3. Send Luka the server's public IPv4 (and IPv6 if enabled) so the DNS record can be created.
-
-## 3. Deploy (Dimitrije)
-
-```sh
-sudo mkdir -p /opt/cal && sudo chown $USER /opt/cal
-git clone https://github.com/scAIentist/cal /opt/cal
-cd /opt/cal/deploy/hetzner
-cp .env.example .env
-```
-
-Fill `.env`:
-
-```sh
-openssl rand -hex 24      # POSTGRES_PASSWORD (letters/digits only, it goes into a URL)
-openssl rand -base64 32   # NEXTAUTH_SECRET
-openssl rand -base64 24   # CALENDSO_ENCRYPTION_KEY (must be exactly 32 bytes)
-openssl rand -hex 16      # CRON_API_KEY
-openssl rand -hex 32      # CRON_SECRET
-```
-
-Leave `GOOGLE_API_CREDENTIALS` and `EMAIL_SERVER_PASSWORD` empty until Luka sends them (sections 5 and 6), then fill and `docker compose up -d` again.
-
-Pull the image and start:
-
-```sh
-docker login ghcr.io          # only if the package is private: GitHub username + a PAT with read:packages
-docker compose pull
-docker compose up -d
-docker compose logs -f calcom  # first start runs migrations and seeds the app store, takes ~1 minute
-```
-
-The image is `ghcr.io/scaientist/cal:latest`, built by the workflow on every push to `main`. If the first `docker compose pull` is denied, make the package public: GitHub → scAIentist → Packages → cal → Package settings → Change visibility.
-
-Check: `curl -I https://cal.scaientist.eu` returns 200 once DNS (section 4) has propagated and Traefik has issued the certificate.
+Deployment moved to the infra repo: [scAIentist/traefik → docs/CAL.md](https://github.com/scAIentist/traefik/blob/main/docs/CAL.md).
+In short: fill `cal/.env.example` there, store it as the `CAL_ENV` repository secret, run the "Deploy cal stack" workflow. The image is `ghcr.io/scaientist/cal:latest` (private by default: make the package public or `docker login ghcr.io` on the VM).
 
 ## 4. DNS (Luka)
 
-At controlpanel.si for `scaientist.eu`, add:
-
-```
-A     cal   <server IPv4>
-AAAA  cal   <server IPv6>   (only if the server has one and Traefik listens on it)
-```
-
-Tell Dimitrije when it is done; Traefik picks up the certificate automatically.
+At controlpanel.si for `scaientist.eu`, add `A  cal  46.225.83.45` (the Swarm VM, same as traefik.scaientist.eu). Traefik picks up the certificate automatically.
 
 ## 5. Google Calendar + Google Meet (Luka)
 
@@ -103,10 +61,9 @@ Do this as **luka@scaientist.eu** (Workspace), not as scaientist@gmail.com:
 
 Separate, unrelated finding while checking DNS: the SPF record for `scaientist.eu` is `v=spf1 a mx include:_spf.controlpanel.si ~all` and does **not** include Google. Mail sent from Workspace can land in spam. Fix at controlpanel.si: `v=spf1 include:_spf.google.com include:_spf.controlpanel.si ~all`.
 
-## 7. Cron and backups (Dimitrije)
+## 7. Cron and backups (Ivan)
 
-- Reminders, webhooks and calendar sync are driven by the `cron` sidecar in the compose file; nothing to install. Check with `docker compose logs cron`.
-- Nightly database dump: `crontab -e` → `15 3 * * * /opt/cal/deploy/hetzner/backup.sh >> /opt/cal/backups/backup.log 2>&1`. Keeps 14 days in `/opt/cal/backups`. Copy them off-box (Hetzner Storage Box or S3) if you want real disaster recovery.
+The cron sidecar is part of the Swarm stack; the nightly backup script and its crontab line are in the infra repo (`cal/backup.sh`).
 
 ## 8. First login and signup policy (Luka)
 
@@ -116,10 +73,8 @@ Separate, unrelated finding while checking DNS: the SPF record for `scaientist.e
 4. Signup stays open only for `@scaientist.eu`, `@scaientist.com` and `@sci.tools` addresses (`SIGNUP_ALLOWED_EMAIL_DOMAINS` in `.env`). Anyone else gets "Signup is restricted to company email addresses". Team invites you send from inside Cal still work for any address.
 5. Optional admin role (Settings → Admin): `docker compose exec db psql -U cal -d cal -c "UPDATE \"users\" SET role='ADMIN' WHERE email='luka@scaientist.eu';"`
 
-## 9. Updating (Dimitrije)
+## 9. Updating (Ivan)
 
-1. GitHub → scAIentist/cal → **Sync fork** (pulls upstream cal.diy into `main`). Our changes live only in the paths listed at the top, so conflicts are rare.
-   Upstream's own CI workflows (`.github/workflows/*`, ~50 files) are deleted in this fork because they need Cal.com's secrets and fail on every push. If a sync brings some back or reports a conflict on them, resolve by keeping them deleted (or click "Disable workflow" in the Actions tab for any that reappear). Only `scaientist-docker-image.yml` should remain.
-2. The push to `main` triggers the image build (~20–30 min). Watch Actions.
-3. On the server: `cd /opt/cal/deploy/hetzner && docker compose pull && docker compose up -d`. Migrations run on start.
-4. Rollback: set `CAL_IMAGE_TAG=<previous sha>` in `.env` and `docker compose up -d`.
+1. GitHub → scAIentist/cal → **Sync fork** (pulls upstream cal.diy into `main`). Our changes live only in the paths listed at the top, so conflicts are rare. Upstream's own CI workflows are deleted in this fork; if a sync brings some back, keep them deleted (only `scaientist-docker-image.yml` should remain).
+2. The push to `main` rebuilds the image (~20 min). Then re-run "Deploy cal stack" in the infra repo, or on the VM: `docker service update --image ghcr.io/scaientist/cal:latest cal_calcom`. Migrations run on start.
+3. Rollback: set `CAL_IMAGE_TAG=<previous sha>` in the `CAL_ENV` secret and redeploy.
