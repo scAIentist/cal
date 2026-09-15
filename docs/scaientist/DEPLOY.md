@@ -1,13 +1,13 @@
 # cal.scaientist.eu — Hetzner deployment runbook
 
 Self-hosted scheduling for scAIentist, a fork of [calcom/cal.diy](https://github.com/calcom/cal.diy) (MIT).
-Hosting: the existing Hetzner Swarm VM (`46.225.83.45`), Postgres in the same stack, behind the existing Traefik. Deployment files and workflow: [scAIentist/traefik](https://github.com/scAIentist/traefik) → `cal/` and `docs/CAL.md`.
+Hosting: the existing Hetzner Swarm VM (`46.225.83.45`), Postgres in the same stack, behind the existing Traefik. Deployment files: `deploy/cal/` in this repository (Swarm stack, `.env.example`, backup and cron scripts); workflow `.github/workflows/deploy-hetzner.yml`.
 
 What this fork adds on top of upstream (keep these paths in mind when syncing the fork):
 
 | Path | Purpose |
 |---|---|
-| (deployment) | lives in the infra repo [scAIentist/traefik](https://github.com/scAIentist/traefik) under `cal/` (Swarm stack, deploy workflow, backup) |
+| `deploy/cal/`, `.github/workflows/deploy-hetzner.yml` | Swarm stack, runtime config template, backup + cron scripts, SSH deploy workflow |
 | `.github/workflows/scaientist-docker-image.yml` | builds `ghcr.io/scaientist/cal` on every push to `main` (all upstream workflows are removed, see section 9) |
 | `apps/web/lib/signup/isEmailDomainAllowed.ts` + one check in `apps/web/app/api/auth/signup/route.ts` | `SIGNUP_ALLOWED_EMAIL_DOMAINS` — self-service signup only for scaientist.eu, scaientist.com, sci.tools |
 | `docs/scaientist/` | this runbook and `EMAIL-MIGRATION.md` |
@@ -31,8 +31,13 @@ Facts the setup relies on:
 
 ## 2–3. Server and deploy (Ivan)
 
-Deployment moved to the infra repo: [scAIentist/traefik → docs/CAL.md](https://github.com/scAIentist/traefik/blob/main/docs/CAL.md).
-In short: fill `cal/.env.example` there, store it as the `CAL_ENV` repository secret, run the "Deploy cal stack" workflow. The image is `ghcr.io/scaientist/cal:latest` (private by default: make the package public or `docker login ghcr.io` on the VM).
+The host runs Docker Swarm with Traefik on the `traefik-public` network and the `myresolver` cert resolver
+(see [scAIentist/traefik](https://github.com/scAIentist/traefik)); the stack in `deploy/cal/` matches that.
+
+1. Image: `ghcr.io/scaientist/cal:latest`, rebuilt on every push to `main` by `scaientist-docker-image.yml`. The GHCR package is private by default: make it public (scAIentist → Packages → cal → settings) or `docker login ghcr.io` on the VM with a PAT that has `read:packages`, so `docker stack deploy --with-registry-auth` can pull it.
+2. Repository secrets (Settings → Secrets and variables → Actions): `VM_HOST`, `VM_USER`, `VM_SSH_KEY` (same values as in scAIentist/traefik) and **`CAL_ENV`** = `deploy/cal/.env.example` filled with real values (generation commands are in the file). If `CAL_ENV` is missing the workflow warns and skips.
+3. Actions → **Deploy cal stack (Hetzner)** → Run workflow. It copies `deploy/cal/` to `/opt/stacks/cal/` and runs `docker stack deploy`. First start runs the migrations and seeds the app store (Google credentials from `GOOGLE_API_CREDENTIALS`), about one minute.
+4. Check: `docker service ls --filter name=cal_`, `docker service logs -f cal_calcom`. If a task fails, `docker service ps cal_calcom --no-trunc` shows why. The stack has been validated as YAML, not yet against the live Swarm; expect at most a small fix on first deploy.
 
 ## 4. DNS (Luka)
 
@@ -48,7 +53,7 @@ Do this as **luka@scaientist.eu** (Workspace), not as scaientist@gmail.com:
 4. Credentials → Create credentials → OAuth client ID → Web application. Authorized redirect URIs:
    - `https://cal.scaientist.eu/api/integrations/googlecalendar/callback`
    - `https://cal.scaientist.eu/api/auth/callback/google`
-5. Download the JSON, send it to Dimitrije (or paste it yourself) as the value of `GOOGLE_API_CREDENTIALS` in `.env`, one line. Restart: `docker compose up -d`. The container seeds the credentials into the app store on start.
+5. Download the JSON, send it to Dimitrije (or paste it yourself) as the value of `GOOGLE_API_CREDENTIALS` in `.env`, one line. Redeploy the stack. The container seeds the credentials into the app store on start.
 6. In Cal (after section 8): Apps → Calendar → **Google Calendar** → Install → pick luka@scaientist.eu. Choose the calendar to check for conflicts and the one new bookings are written to.
 7. Apps → Conferencing → **Google Meet** → install, set as default location. No Daily.co key needed.
 8. Until the Gmail calendar is migrated (see `EMAIL-MIGRATION.md`), also install Google Calendar a second time with scaientist@gmail.com and tick its calendar for conflict checking only. Internal OAuth apps do not accept a plain Gmail login, so for that second connection you would need an External consent screen; the simpler path is to share the Gmail calendar with luka@scaientist.eu (Calendar settings → Share with specific people, "See all event details") and tick that shared calendar inside the luka@scaientist.eu connection.
@@ -63,7 +68,7 @@ Separate, unrelated finding while checking DNS: the SPF record for `scaientist.e
 
 ## 7. Cron and backups (Ivan)
 
-The cron sidecar is part of the Swarm stack; the nightly backup script and its crontab line are in the infra repo (`cal/backup.sh`).
+The cron sidecar (`deploy/cal/cron.sh`) is part of the Swarm stack; nothing to install on the host. Nightly backup: `crontab -e` → `15 3 * * * /opt/stacks/cal/backup.sh >> /opt/backups/cal/backup.log 2>&1` (`deploy/cal/backup.sh`, 14-day retention).
 
 ## 8. First login and signup policy (Luka)
 
@@ -71,10 +76,10 @@ The cron sidecar is part of the Swarm stack; the nightly backup script and its c
 2. Onboarding: timezone Europe/Ljubljana, working hours, connect Google Calendar (section 5).
 3. Settings → Security → enable two-factor auth.
 4. Signup stays open only for `@scaientist.eu`, `@scaientist.com` and `@sci.tools` addresses (`SIGNUP_ALLOWED_EMAIL_DOMAINS` in `.env`). Anyone else gets "Signup is restricted to company email addresses". Team invites you send from inside Cal still work for any address.
-5. Optional admin role (Settings → Admin): `docker compose exec db psql -U cal -d cal -c "UPDATE \"users\" SET role='ADMIN' WHERE email='luka@scaientist.eu';"`
+5. Optional admin role (Settings → Admin): `docker exec -it $(docker ps -q -f name=cal_db) psql -U cal -d cal -c "UPDATE \"users\" SET role='ADMIN' WHERE email='luka@scaientist.eu';"`
 
 ## 9. Updating (Ivan)
 
 1. GitHub → scAIentist/cal → **Sync fork** (pulls upstream cal.diy into `main`). Our changes live only in the paths listed at the top, so conflicts are rare. Upstream's own CI workflows are deleted in this fork; if a sync brings some back, keep them deleted (only `scaientist-docker-image.yml` should remain).
-2. The push to `main` rebuilds the image (~20 min). Then re-run "Deploy cal stack" in the infra repo, or on the VM: `docker service update --image ghcr.io/scaientist/cal:latest cal_calcom`. Migrations run on start.
+2. The push to `main` rebuilds the image (~20 min). Then re-run "Deploy cal stack (Hetzner)" here, or on the VM: `docker service update --image ghcr.io/scaientist/cal:latest cal_calcom`. Migrations run on start.
 3. Rollback: set `CAL_IMAGE_TAG=<previous sha>` in the `CAL_ENV` secret and redeploy.
