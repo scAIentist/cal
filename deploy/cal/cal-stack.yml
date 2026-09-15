@@ -1,0 +1,77 @@
+# Cal.diy (scAIentist fork) — Docker Swarm stack for cal.scaientist.eu
+# Image is built by https://github.com/scAIentist/cal (.github/workflows/scaientist-docker-image.yml).
+# Deployed by .github/workflows/deploy-hetzner.yml to /opt/stacks/cal/ on the Swarm manager.
+# Runtime configuration comes from /opt/stacks/cal/.env (written from the CAL_ENV secret).
+#
+# Manual deploy on the VM:
+#   cd /opt/stacks/cal && set -a && . ./.env && set +a && docker stack deploy -c cal-stack.yml cal
+
+services:
+  db:
+    image: postgres:16-alpine
+    env_file: .env
+    volumes:
+      - cal_db:/var/lib/postgresql/data
+    networks:
+      - cal-internal
+    deploy:
+      restart_policy:
+        condition: any
+      placement:
+        constraints:
+          - node.role == manager
+
+  calcom:
+    image: ghcr.io/scaientist/cal:${CAL_IMAGE_TAG:-latest}
+    env_file: .env
+    environment:
+      DATABASE_HOST: db:5432
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      DATABASE_DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    networks:
+      - cal-internal
+      - traefik-public
+    deploy:
+      restart_policy:
+        condition: any
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=traefik-public"
+        - "traefik.http.routers.cal.rule=Host(`cal.scaientist.eu`)"
+        - "traefik.http.routers.cal.entrypoints=websecure"
+        - "traefik.http.routers.cal.tls=true"
+        - "traefik.http.routers.cal.tls.certresolver=myresolver"
+        - "traefik.http.services.cal.loadbalancer.server.port=3000"
+
+  cron:
+    image: curlimages/curl:8.10.1
+    env_file: .env
+    environment:
+      CAL_INTERNAL_URL: http://calcom:3000
+    configs:
+      - source: cal_cron
+        target: /cron.sh
+    entrypoint: ["/bin/sh", "/cron.sh"]
+    networks:
+      - cal-internal
+    deploy:
+      restart_policy:
+        condition: any
+      placement:
+        constraints:
+          - node.role == manager
+
+configs:
+  cal_cron:
+    file: ./cron.sh
+
+volumes:
+  cal_db:
+
+networks:
+  cal-internal:
+  traefik-public:
+    external: true
