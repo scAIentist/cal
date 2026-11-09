@@ -19,7 +19,10 @@ concurrency:
 jobs:
   build:
     name: Build and push ghcr.io/scaientist/cal
-    runs-on: ubuntu-latest
+    # The Hetzner host is aarch64. The Dockerfile builds node_modules on the
+    # runner's own platform and copies them into the final image, so the
+    # runner itself must be ARM for the native modules to match.
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +48,7 @@ jobs:
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64
+          platforms: linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
