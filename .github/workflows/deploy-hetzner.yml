@@ -17,8 +17,10 @@ jobs:
 
       - name: Check that the CAL_ENV secret exists
         id: check
+        env:
+          CAL_ENV: ${{ secrets.CAL_ENV }}
         run: |
-          if [ -z "${{ secrets.CAL_ENV }}" ]; then
+          if [ -z "$CAL_ENV" ]; then
             echo "::warning::Repository secret CAL_ENV is not set — skipping deploy. Paste the contents of deploy/cal/.env.example with real values into the secret, then re-run this workflow."
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
@@ -27,8 +29,10 @@ jobs:
 
       - name: Write .env from the CAL_ENV secret
         if: steps.check.outputs.ready == 'true'
+        env:
+          CAL_ENV: ${{ secrets.CAL_ENV }}
         run: |
-          printf '%s\n' "${{ secrets.CAL_ENV }}" > deploy/cal/.env
+          printf '%s\n' "$CAL_ENV" > deploy/cal/.env
           chmod 600 deploy/cal/.env
 
       - name: Copy stack files to VM
