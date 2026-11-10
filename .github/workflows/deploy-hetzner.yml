@@ -58,6 +58,9 @@ jobs:
             cd /opt/stacks/cal
             chmod 600 .env
             chmod +x *.sh
-            set -a; . ./.env; set +a
+            # Only these four are substituted into cal-stack.yml. The rest of
+            # .env is read by Docker itself through env_file, so it never goes
+            # through the shell (values may contain spaces or JSON).
+            export $(grep -E '^(POSTGRES_USER|POSTGRES_PASSWORD|POSTGRES_DB|CAL_IMAGE_TAG)=' .env)
             docker stack deploy --with-registry-auth -c cal-stack.yml cal
             docker service ls --filter name=cal_
